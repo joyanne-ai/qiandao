@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>低碳行为打卡积分系统</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #f0f9eb;
+    font-family: "Microsoft YaHei", Arial, sans-serif;
+    padding: 20px;
+  }
+  .container {
+    max-width: 460px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 16px;
+    padding: 24px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.08);
+  }
+  h1 {
+    text-align: center;
+    color: #2e7d32;
+    margin-bottom: 18px;
+    font-size: 22px;
+  }
+  .section { margin-bottom: 16px; }
+  label {
+    font-weight: bold;
+    color: #333;
+    display: block;
+    margin-bottom: 8px;
+  }
+  select, button {
+    width: 100%;
+    padding: 11px;
+    border-radius: 8px;
+    border: 1px solid #ccc;
+    font-size: 15px;
+  }
+  .item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  .score-box {
+    background: #e8f5e9;
+    padding: 12px;
+    border-radius: 8px;
+    margin: 14px 0;
+    text-align: center;
+  }
+  .score-box .num {
+    font-size: 24px;
+    color: #2e7d32;
+    font-weight: bold;
+  }
+  button {
+    background: #2e7d32;
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    font-weight: bold;
+  }
+  button.secondary { background: #348ede; }
+  button.danger { background: #e57373; }
+  .btn-group {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+  }
+  .log-box {
+    margin-top: 16px;
+    background: #f8fff8;
+    padding: 12px;
+    border-radius: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+  .log-item {
+    padding: 6px 0;
+    border-bottom: 1px dashed #dcedc8;
+    font-size: 14px;
+  }
+  .hidden { display: none; }
+  .admin-panel {
+    margin-top: 20px;
+    border-top: 2px solid #c8e6c9;
+    padding-top: 16px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    border: 1px solid #e0e0e0;
+    padding: 8px;
+    text-align: center;
+  }
+  th { background: #c8e6c9; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🌱 低碳行为打卡积分系统</h1>
+
+  <div class="section">
+    <label>选择你的名字</label>
+    <select id="memberSelect"></select>
+  </div>
+
+  <div class="section">
+    <label>✅ 勾选本次低碳行为（可多选）</label>
+    <div id="actionList"></div>
+  </div>
+
+  <div class="score-box">
+    <div>当前累计积分</div>
+    <div class="num" id="totalScore">0</div>
+  </div>
+
+  <button id="submitBtn">📝 提交本次打卡</button>
+
+  <div class="btn-group">
+    <button class="secondary" id="refreshBtn">🔄 刷新记录</button>
+    <button class="secondary" id="exportBtn">📤 导出个人记录</button>
+  </div>
+
+  <div class="log-box" id="logBox">加载中...</div>
+
+  <div class="btn-group" style="margin-top:16px;">
+    <button class="secondary" id="enterAdminBtn">🔐 进入管理后台</button>
+  </div>
+
+  <div class="admin-panel hidden" id="adminPanel">
+    <h3 style="margin-bottom:10px;">管理后台 - 全部成员积分</h3>
+    <button class="secondary" id="exportAllBtn" style="margin-bottom:10px;">📤 导出全部记录</button>
+    <table id="adminTable">
+      <thead>
+        <tr>
+          <th>排名</th>
+          <th>姓名</th>
+          <th>总积分</th>
+          <th>打卡次数</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js"></script>
+<script>
+  // ===================== 配置区 =====================
+  const SUPABASE_URL = "https://mewxngckvlmqeacmzsns.supabase.co";
+  const SUPABASE_ANON_KEY = "sb_publishable_FFjkHVfrdyc-gAB6pA9ubA_Q2AA-3sI";
+  const ADMIN_PASSWORD = "admin123"; // 管理后台密码，你可以改成别的
+  // =================================================
+
+  const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const actions = [
+    { name: "步行出行", score: 2 },
+    { name: "骑行", score: 3 },
+    { name: "公交/地铁", score: 3 },
+    { name: "拼车出行", score: 2 },
+    { name: "自带水杯/购物袋", score: 1 },
+    { name: "光盘行动", score: 2 },
+    { name: "无纸化学习", score: 1 },
+    { name: "节约用水", score: 1 },
+    { name: "节约用电", score: 1 },
+    { name: "垃圾分类", score: 1 },
+    { name: "二手循环利用", score: 2 },
+    { name: "植树/线上植树", score: 3 },
+    { name: "低碳饮食", score: 1 }
+  ];
+
+  const memberSelect = document.getElementById("memberSelect");
+  const actionList = document.getElementById("actionList");
+  const totalScoreDom = document.getElementById("totalScore");
+  const logBox = document.getElementById("logBox");
+  const adminPanel = document.getElementById("adminPanel");
+  const adminTable = document.querySelector("#adminTable tbody");
+
+  // 加载成员
+  async function loadMembers() {
+    const { data } = await supabaseClient.from("members").select("*").order("name");
+    memberSelect.innerHTML = "";
+    data.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.name;
+      memberSelect.appendChild(opt);
+    });
+  }
+
+  // 加载行为列表
+  function loadActions() {
+    actionList.innerHTML = "";
+    actions.forEach((a, i) => {
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `
+        <input type="checkbox" id="action${i}" data-name="${a.name}" data-score="${a.score}">
+        <label for="action${i}">${a.name}（${a.score}分）</label>
+      `;
+      actionList.appendChild(div);
+    });
+  }
+
+  // 加载个人记录
+  async function loadPersonalRecords() {
+    const memberId = memberSelect.value;
+    if (!memberId) return;
+
+    const { data } = await supabaseClient
+      .from("checkins")
+      .select("action, score, created_at")
+      .eq("member_id", memberId)
+      .order("created_at", { ascending: false });
+
+    const total = data.reduce((sum, item) => sum + item.score, 0);
+    totalScoreDom.textContent = total;
+
+    logBox.innerHTML = "📜 打卡日志：<br>";
+    data.forEach(item => {
+      const time = new Date(item.created_at).toLocaleString();
+      logBox.innerHTML += `<div class="log-item">[${time}] ${item.action} +${item.score}分</div>`;
+    });
+  }
+
+  // 提交打卡
+  document.getElementById("submitBtn").addEventListener("click", async () => {
+    const memberId = memberSelect.value;
+    const checkboxes = document.querySelectorAll("#actionList input:checked");
+
+    if (checkboxes.length === 0) {
+      alert("请至少勾选一项低碳行为！");
+      return;
+    }
+
+    for (const cb of checkboxes) {
+      await supabaseClient.from("checkins").insert({
+        member_id: memberId,
+        action: cb.dataset.name,
+        score: Number(cb.dataset.score)
+      });
+    }
+
+    alert("✅ 打卡成功！积分已更新");
+    loadPersonalRecords();
+    loadAdminTable();
+  });
+
+  // 刷新
+  document.getElementById("refreshBtn").addEventListener("click", () => {
+    loadPersonalRecords();
+    loadAdminTable();
+  });
+
+  // 导出个人记录
+  document.getElementById("exportBtn").addEventListener("click", async () => {
+    const memberId = memberSelect.value;
+    const memberName = memberSelect.options[memberSelect.selectedIndex].text;
+    const { data } = await supabaseClient
+      .from("checkins")
+      .select("action, score, created_at")
+      .eq("member_id", memberId)
+      .order("created_at", { ascending: true });
+
+    let csv = "时间,行为,积分\n";
+    data.forEach(item => {
+      csv += `${item.created_at},${item.action},${item.score}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${memberName}_低碳记录.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // 进入管理后台
+  document.getElementById("enterAdminBtn").addEventListener("click", () => {
+    const pwd = prompt("请输入管理密码：");
+    if (pwd === ADMIN_PASSWORD) {
+      adminPanel.classList.remove("hidden");
+      loadAdminTable();
+    } else {
+      alert("密码错误！");
+    }
+  });
+
+  // 加载管理后台表格
+  async function loadAdminTable() {
+    const { data } = await supabaseClient.from("members").select(`
+      id,
+      name,
+      checkins(score, created_at)
+    `);
+
+    const stats = data.map(m => {
+      const total = m.checkins.reduce((sum, c) => sum + (c.score || 0), 0);
+      return { name: m.name, total, count: m.checkins.length };
+    });
+
+    stats.sort((a, b) => b.total - a.total);
+
+    adminTable.innerHTML = "";
+    stats.forEach((item, index) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${index + 1}</td>
+        <td>${item.name}</td>
+        <td>${item.total}</td>
+        <td>${item.count}</td>
+      `;
+      adminTable.appendChild(tr);
+    });
+  }
+
+  // 导出全部记录
+  document.getElementById("exportAllBtn").addEventListener("click", async () => {
+    const { data } = await supabaseClient.from("checkins").select("members(name), score, created_at").order("created_at");
+
+    let csv = "姓名,积分,时间\n";
+    data.forEach(item => {
+      csv += `${item.members.name},${item.score},${item.created_at}\n`;
+    });
+
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "全部成员低碳记录.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  // 切换成员时刷新
+  memberSelect.addEventListener("change", loadPersonalRecords);
+
+  // 初始化
+  loadMembers();
+  loadActions();
+  loadPersonalRecords();
+</script>
