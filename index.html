@@ -32,7 +32,7 @@
     display: block;
     margin-bottom: 8px;
   }
-  select, button {
+  select, button, input[type="file"] {
     width: 100%;
     padding: 11px;
     border-radius: 8px;
@@ -85,11 +85,21 @@
     border-bottom: 1px dashed #dcedc8;
     font-size: 14px;
   }
+  .log-item img {
+    max-width: 80px;
+    margin-top:4px;
+    border-radius:4px;
+  }
   .hidden { display: none; }
   .admin-panel {
     margin-top: 20px;
     border-top: 2px solid #c8e6c9;
     padding-top: 16px;
+  }
+  .rank-panel {
+    margin-top:20px;
+    border-top:2px solid #c8e6c9;
+    padding-top:16px;
   }
   table {
     width: 100%;
@@ -102,6 +112,27 @@
     text-align: center;
   }
   th { background: #c8e6c9; }
+  .tip {
+    color:#666;
+    font-size:13px;
+    margin-top:4px;
+  }
+  .preview-img{
+    max-width:120px;
+    margin-top:8px;
+    border-radius:6px;
+  }
+  .add-member-row{
+    display:flex;
+    gap:8px;
+    margin-bottom:12px;
+  }
+  .add-member-row input{
+    flex:1;
+    padding:8px;
+    border:1px solid #ccc;
+    border-radius:6px;
+  }
 </style>
 </head>
 <body>
@@ -116,7 +147,14 @@
 
   <div class="section">
     <label>✅ 勾选本次低碳行为（可多选）</label>
+    <div class="tip">同一行为每天只能打卡一次，防止重复刷分</div>
     <div id="actionList"></div>
+  </div>
+
+  <div class="section">
+    <label>📷 上传打卡图片（必须上传）</label>
+    <input type="file" id="imgUpload" accept="image/*">
+    <div><img id="imgPreview" class="preview-img hidden" /></div>
   </div>
 
   <div class="score-box">
@@ -135,12 +173,39 @@
 
   <div class="btn-group" style="margin-top:16px;">
     <button class="secondary" id="enterAdminBtn">🔐 进入管理后台</button>
+    <button class="secondary" id="enterRankBtn">🏆 排行榜</button>
   </div>
 
+  <!-- 管理后台 -->
   <div class="admin-panel hidden" id="adminPanel">
     <h3 style="margin-bottom:10px;">管理后台 - 全部成员积分</h3>
+    <!-- 管理员专属：新增、删除成员 -->
+    <div id="adminOperateArea" class="hidden">
+      <div class="add-member-row">
+        <input type="text" id="newMemberName" placeholder="输入新成员姓名">
+        <button class="secondary" id="addMemberBtn">新增成员</button>
+      </div>
+      <button class="danger" id="delMemberBtn" style="margin-bottom:10px;">删除选中成员</button>
+    </div>
     <button class="secondary" id="exportAllBtn" style="margin-bottom:10px;">📤 导出全部记录</button>
     <table id="adminTable">
+      <thead>
+        <tr>
+          <th class="admin-checkbox-col hidden">选择</th>
+          <th>排名</th>
+          <th>姓名</th>
+          <th>总积分</th>
+          <th>打卡次数</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- 独立排行榜（免密码，所有人可见） -->
+  <div class="rank-panel hidden" id="rankPanel">
+    <h3 style="text-align:center; margin-bottom:10px;">🏆 低碳积分排行榜</h3>
+    <table id="rankTable">
       <thead>
         <tr>
           <th>排名</th>
@@ -159,7 +224,8 @@
   // ===================== 配置区 =====================
   const SUPABASE_URL = "https://mewxngckvlmqeacmzsns.supabase.co";
   const SUPABASE_ANON_KEY = "sb_publishable_FFjkHVfrdyc-gAB6pA9ubA_Q2AA-3sI";
-  const ADMIN_PASSWORD = "admin123"; // 管理后台密码，你可以改成别的
+  const ADMIN_PASSWORD = "admin123";
+  const BUCKET_NAME = "checkin-images";
   // =================================================
 
   const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -186,10 +252,47 @@
   const logBox = document.getElementById("logBox");
   const adminPanel = document.getElementById("adminPanel");
   const adminTable = document.querySelector("#adminTable tbody");
+  const rankPanel = document.getElementById("rankPanel");
+  const rankTable = document.querySelector("#rankTable tbody");
+  const imgUpload = document.getElementById("imgUpload");
+  const imgPreview = document.getElementById("imgPreview");
+  const adminOperateArea = document.getElementById("adminOperateArea");
+  const adminCheckboxCol = document.querySelector(".admin-checkbox-col");
+
+  let selectedFile = null;
+
+  // 图片预览
+  imgUpload.onchange = function(e){
+    const file = e.target.files[0];
+    if(!file) return;
+    selectedFile = file;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      imgPreview.src = ev.target.result;
+      imgPreview.classList.remove("hidden");
+    }
+    reader.readAsDataURL(file);
+  }
+
+  // 日期辅助：获取当天0点、24点
+  function getTodayRange() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { start, end };
+  }
+  function formatTime(str) {
+    return new Date(str).toLocaleString("zh-CN");
+  }
 
   // 加载成员
   async function loadMembers() {
-    const { data } = await supabaseClient.from("members").select("*").order("name");
+    const { data, error } = await supabaseClient.from("members").select("*").order("name");
+    if(error) {
+      logBox.innerHTML = "成员加载失败：" + error.message;
+      return;
+    }
     memberSelect.innerHTML = "";
     data.forEach(m => {
       const opt = document.createElement("option");
@@ -197,6 +300,7 @@
       opt.textContent = m.name;
       memberSelect.appendChild(opt);
     });
+    loadPersonalRecords();
   }
 
   // 加载行为列表
@@ -213,25 +317,47 @@
     });
   }
 
-  // 加载个人记录
+  // 加载个人记录（展示图片）
   async function loadPersonalRecords() {
     const memberId = memberSelect.value;
     if (!memberId) return;
 
-    const { data } = await supabaseClient
+    const { data, error } = await supabaseClient
       .from("checkins")
-      .select("action, score, created_at")
+      .select("action, score, created_at, image_url")
       .eq("member_id", memberId)
       .order("created_at", { ascending: false });
+
+    if(error) {
+      logBox.innerHTML = "记录加载失败：" + error.message;
+      return;
+    }
 
     const total = data.reduce((sum, item) => sum + item.score, 0);
     totalScoreDom.textContent = total;
 
     logBox.innerHTML = "📜 打卡日志：<br>";
+    if(data.length === 0) {
+      logBox.innerHTML += "<div class='log-item'>暂无打卡记录</div>";
+      return;
+    }
     data.forEach(item => {
-      const time = new Date(item.created_at).toLocaleString();
-      logBox.innerHTML += `<div class="log-item">[${time}] ${item.action} +${item.score}分</div>`;
+      const time = formatTime(item.created_at);
+      let html = `<div class="log-item">[${time}] ${item.action} +${item.score}分`;
+      if(item.image_url) html += `<br><img src="${item.image_url}" alt="打卡图">`;
+      html += "</div>";
+      logBox.innerHTML += html;
     });
+  }
+
+  // 上传图片到storage
+  async function uploadImage(file) {
+    const ext = file.name.split(".").pop();
+    const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { data, error } = await supabaseClient.storage.from(BUCKET_NAME).upload(fileName, file);
+    if(error) throw error;
+    const { data: { publicUrl } } = supabaseClient.storage.from(BUCKET_NAME).getPublicUrl(fileName);
+    return publicUrl;
   }
 
   // 提交打卡
@@ -243,24 +369,66 @@
       alert("请至少勾选一项低碳行为！");
       return;
     }
+    if(!selectedFile){
+      alert("请上传打卡图片！");
+      return;
+    }
 
+    const { start, end } = getTodayRange();
+    const { data: todayCheck } = await supabaseClient
+      .from("checkins")
+      .select("action")
+      .eq("member_id", memberId)
+      .gte("created_at", start.toISOString())
+      .lt("created_at", end.toISOString());
+
+    const todayActions = todayCheck.map(x=>x.action);
+    let insertList = [];
     for (const cb of checkboxes) {
-      await supabaseClient.from("checkins").insert({
+      const actName = cb.dataset.name;
+      if(todayActions.includes(actName)) {
+        alert(`【${actName}】今天已经打卡过了，不能重复打卡！`);
+        return;
+      }
+      insertList.push({
         member_id: memberId,
-        action: cb.dataset.name,
+        action: actName,
         score: Number(cb.dataset.score)
       });
     }
 
+    // 上传图片
+    let imgUrl;
+    try{
+      imgUrl = await uploadImage(selectedFile);
+    }catch(e){
+      alert("图片上传失败："+e.message);
+      return;
+    }
+    // 给所有本次打卡记录带上同一张图片
+    insertList.forEach(row=>row.image_url = imgUrl);
+
+    const { error } = await supabaseClient.from("checkins").insert(insertList);
+    if(error) {
+      alert("打卡失败："+error.message);
+      return;
+    }
     alert("✅ 打卡成功！积分已更新");
+    // 重置
+    checkboxes.forEach(cb=>cb.checked=false);
+    imgUpload.value = "";
+    imgPreview.classList.add("hidden");
+    selectedFile = null;
     loadPersonalRecords();
     loadAdminTable();
+    loadRankTable();
   });
 
   // 刷新
   document.getElementById("refreshBtn").addEventListener("click", () => {
     loadPersonalRecords();
     loadAdminTable();
+    loadRankTable();
   });
 
   // 导出个人记录
@@ -269,16 +437,15 @@
     const memberName = memberSelect.options[memberSelect.selectedIndex].text;
     const { data } = await supabaseClient
       .from("checkins")
-      .select("action, score, created_at")
+      .select("action, score, created_at, image_url")
       .eq("member_id", memberId)
       .order("created_at", { ascending: true });
 
-    let csv = "时间,行为,积分\n";
+    let csv = "时间,行为,积分,图片链接\n";
     data.forEach(item => {
-      csv += `${item.created_at},${item.action},${item.score}\n`;
+      csv += `${formatTime(item.created_at)},${item.action},${item.score},${item.image_url||""}\n`;
     });
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF"+csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -287,19 +454,61 @@
     URL.revokeObjectURL(url);
   });
 
-  // 进入管理后台
+  // 进入管理后台（输入密码成功后，才显示增删成员控件）
   document.getElementById("enterAdminBtn").addEventListener("click", () => {
     const pwd = prompt("请输入管理密码：");
     if (pwd === ADMIN_PASSWORD) {
       adminPanel.classList.remove("hidden");
-      loadAdminTable();
+      rankPanel.classList.add("hidden");
+      // 密码正确，开启管理员专属操作
+      adminOperateArea.classList.remove("hidden");
+      adminCheckboxCol.classList.remove("hidden");
+      loadAdminTable(true);
     } else {
       alert("密码错误！");
     }
   });
 
-  // 加载管理后台表格
-  async function loadAdminTable() {
+  // 打开排行榜
+  document.getElementById("enterRankBtn").addEventListener("click", ()=>{
+    adminPanel.classList.add("hidden");
+    rankPanel.classList.remove("hidden");
+    loadRankTable();
+  })
+
+  // 新增成员
+  document.getElementById("addMemberBtn").onclick = async ()=>{
+    const name = document.getElementById("newMemberName").value.trim();
+    if(!name){
+      alert("请输入姓名");
+      return;
+    }
+    const {error} = await supabaseClient.from("members").insert({name});
+    if(error){
+      alert("新增失败："+error.message);
+    }else{
+      alert("新增成功");
+      document.getElementById("newMemberName").value="";
+      loadMembers();
+      loadAdminTable(true);
+    }
+  }
+
+  // 删除选中成员
+  document.getElementById("delMemberBtn").onclick = async ()=>{
+    const chk = adminTable.querySelector("input:checked");
+    if(!chk) { alert("请先勾选要删除的成员"); return; }
+    if(!confirm("确定删除该成员？该成员所有打卡记录也会一起删除！")) return;
+    const id = chk.value;
+    // 先删打卡记录，再删成员
+    await supabaseClient.from("checkins").delete().eq("member_id",id);
+    const {error} = await supabaseClient.from("members").delete().eq("id",id);
+    if(error) alert("删除失败："+error.message);
+    else { alert("已删除"); loadMembers(); loadAdminTable(true); loadRankTable(); }
+  }
+
+  // 加载管理后台表格，isAdmin=true才渲染单选框
+  async function loadAdminTable(isAdmin = false) {
     const { data } = await supabaseClient.from("members").select(`
       id,
       name,
@@ -308,12 +517,46 @@
 
     const stats = data.map(m => {
       const total = m.checkins.reduce((sum, c) => sum + (c.score || 0), 0);
-      return { name: m.name, total, count: m.checkins.length };
+      return { id:m.id, name: m.name, total, count: m.checkins.length };
     });
-
     stats.sort((a, b) => b.total - a.total);
 
     adminTable.innerHTML = "";
+    stats.forEach((item, index) => {
+      const tr = document.createElement("tr");
+      if(isAdmin){
+        tr.innerHTML = `
+          <td><input type="radio" name="delMember" value="${item.id}"></td>
+          <td>${index + 1}</td>
+          <td>${item.name}</td>
+          <td>${item.total}</td>
+          <td>${item.count}</td>
+        `;
+      }else{
+        tr.innerHTML = `
+          <td>${index + 1}</td>
+          <td>${item.name}</td>
+          <td>${item.total}</td>
+          <td>${item.count}</td>
+        `;
+      }
+      adminTable.appendChild(tr);
+    });
+  }
+
+  // 加载排行榜
+  async function loadRankTable() {
+    const { data } = await supabaseClient.from("members").select(`
+      id,
+      name,
+      checkins(score, created_at)
+    `);
+    const stats = data.map(m => {
+      const total = m.checkins.reduce((sum, c) => sum + (c.score || 0), 0);
+      return { name: m.name, total, count: m.checkins.length };
+    });
+    stats.sort((a, b) => b.total - a.total);
+    rankTable.innerHTML = "";
     stats.forEach((item, index) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
@@ -322,20 +565,27 @@
         <td>${item.total}</td>
         <td>${item.count}</td>
       `;
-      adminTable.appendChild(tr);
+      rankTable.appendChild(tr);
     });
   }
 
   // 导出全部记录
   document.getElementById("exportAllBtn").addEventListener("click", async () => {
-    const { data } = await supabaseClient.from("checkins").select("members(name), score, created_at").order("created_at");
+    const { data: allCheckins } = await supabaseClient
+      .from("checkins")
+      .select("member_id, action, score, created_at, image_url")
+      .order("created_at");
 
-    let csv = "姓名,积分,时间\n";
-    data.forEach(item => {
-      csv += `${item.members.name},${item.score},${item.created_at}\n`;
+    const { data: allMembers } = await supabaseClient.from("members").select("id,name");
+    const mapMember = {};
+    allMembers.forEach(m=> mapMember[m.id] = m.name);
+
+    let csv = "姓名,低碳行为,积分,时间,图片链接\n";
+    allCheckins.forEach(item => {
+      const name = mapMember[item.member_id] || "未知成员";
+      csv += `${name},${item.action},${item.score},${formatTime(item.created_at)},${item.image_url||""}\n`;
     });
-
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["\uFEFF"+csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -344,11 +594,11 @@
     URL.revokeObjectURL(url);
   });
 
-  // 切换成员时刷新
   memberSelect.addEventListener("change", loadPersonalRecords);
 
   // 初始化
   loadMembers();
   loadActions();
-  loadPersonalRecords();
 </script>
+</body>
+</html>
